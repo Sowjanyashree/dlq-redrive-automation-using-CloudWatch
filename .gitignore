@@ -1,0 +1,5 @@
+# Project exclude paths
+/.idea/
+/.aws-sam/
+/MessageProcessor/target/
+/MessageRedriver/target/

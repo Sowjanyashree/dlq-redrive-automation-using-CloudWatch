@@ -1,0 +1,136 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: SAM template for SQS processing with DLQ and Redrive mechanism
+
+Globals:
+  Function:
+    Timeout: 60
+    Runtime: java17
+    MemorySize: 256
+
+Resources:
+  MainQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: MainQueue
+      VisibilityTimeout: 70
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt DeadLetterQueue.Arn
+        maxReceiveCount: 3
+
+  DeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: DeadLetterQueue
+      MessageRetentionPeriod: 100
+
+  MessageProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: MessageProcessorFunction
+      Handler: com.sqsmessage.MessageProcessor::handleRequest
+      CodeUri: MessageProcessor/
+      Policies:
+        - SQSPollerPolicy:
+            QueueName: MainQueue
+        - Statement:
+            - Effect: Allow
+              Action:
+                - sqs:ChangeMessageVisibility
+                - sqs:ChangeMessageVisibilityBatch
+                - sqs:DeleteMessage
+                - sqs:DeleteMessageBatch
+                - sqs:GetQueueAttributes
+                - sqs:ReceiveMessage
+              Resource: !GetAtt MainQueue.Arn
+      Environment:
+        Variables:
+          SOURCE_QUEUE_URL: !Ref MainQueue
+          DLQ_URL: !Ref DeadLetterQueue
+      Events:
+        SQSQueueEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt MainQueue.Arn
+            BatchSize: 5
+
+  MessageRedriveFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: MessageRedriveFunction
+      Handler: com.sqsmessage.MessageRedrive::handleRequest
+      CodeUri: MessageRedriver/
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - sqs:ReceiveMessage
+                - sqs:DeleteMessage
+                - sqs:GetQueueAttributes
+              Resource: !GetAtt DeadLetterQueue.Arn
+        - Statement:
+            - Effect: Allow
+              Action:
+                - sqs:SendMessage
+              Resource: !GetAtt MainQueue.Arn
+      Environment:
+        Variables:
+          DLQ_URL: !Ref DeadLetterQueue
+          SOURCE_QUEUE_URL: !Ref MainQueue
+
+  LogGroupMessageProcessor:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/MessageProcessorFunction
+      RetentionInDays: 7
+
+  LogGroupMessageRedrive:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/MessageRedriveFunction
+      RetentionInDays: 7
+
+  DLQMessageAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: DLQMessageAlarm
+      AlarmDescription: Alarm when there are messages in the DLQ
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt DeadLetterQueue.QueueName
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 3
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref DLQAlarmSNSTopic
+
+  DLQAlarmSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: DLQAlarmSNSTopic
+      KmsMasterKeyId: alias/aws/sns
+
+  DLQAlarmSNSTopicSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref DLQAlarmSNSTopic
+      Protocol: lambda
+      Endpoint: !GetAtt MessageRedriveFunction.Arn
+
+  SNSToRedriveLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt MessageRedriveFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref DLQAlarmSNSTopic
+
+Metadata:
+  BuildMethod: maven
+  BuildProperties:
+    BuildRoot: .
