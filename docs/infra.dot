@@ -1,0 +1,36 @@
+digraph INFRA {
+  node [ color = "black", fillcolor = "#E6E6E6", height =1, style = "filled,bold,rounded", fontname = "Arial" ];
+  "MainQueue" [ label = "MainQueue
+(AWS::SQS::Queue)", shape =rectangle, fillcolor = "#CCE0AC" ];
+  "DeadLetterQueue" [ label = "DeadLetterQueue
+(AWS::SQS::Queue)", shape =rectangle, fillcolor = "#CCE0AC" ];
+  "MessageProcessorFunction" [ label = "MessageProcessorFunction
+(AWS::Lambda::Function)", shape =rectangle, fillcolor = "#B7E0FF" ];
+  "MessageRedriveFunction" [ label = "MessageRedriveFunction
+(AWS::Lambda::Function)", shape =rectangle, fillcolor = "#B7E0FF" ];
+  "LogGroupMessageProcessor" [ label = "LogGroupMessageProcessor
+(AWS::Logs::LogGroup)", shape =rectangle ];
+  "LogGroupMessageRedrive" [ label = "LogGroupMessageRedrive
+(AWS::Logs::LogGroup)", shape =rectangle ];
+  "DLQMessageAlarm" [ label = "DLQMessageAlarm
+(AWS::CloudWatch::Alarm)", shape =rectangle ];
+  "DLQAlarmSNSTopic" [ label = "DLQAlarmSNSTopic
+(AWS::SNS::Topic)", shape =rectangle, fillcolor = "#CCE0AC" ];
+  "DLQAlarmSNSTopicSubscription" [ label = "DLQAlarmSNSTopicSubscription
+(AWS::SNS::Subscription)", shape =rectangle, fillcolor = "#CCE0AC" ];
+  "SNSToRedriveLambdaPermission" [ label = "SNSToRedriveLambdaPermission
+(AWS::Lambda::Permission)", shape =rectangle ];
+  "MainQueue" -> "DeadLetterQueue";
+  "MessageProcessorFunction" -> "MainQueue";
+  "MessageProcessorFunction" -> "DeadLetterQueue";
+  "MessageRedriveFunction" -> "MainQueue";
+  "MessageRedriveFunction" -> "DeadLetterQueue";
+  "LogGroupMessageProcessor" -> "MessageProcessorFunction";
+  "LogGroupMessageRedrive" -> "MessageRedriveFunction";
+  "DLQMessageAlarm" -> "DeadLetterQueue";
+  "DLQMessageAlarm" -> "DLQAlarmSNSTopic";
+  "DLQAlarmSNSTopicSubscription" -> "DLQAlarmSNSTopic";
+  "DLQAlarmSNSTopicSubscription" -> "MessageRedriveFunction";
+  "SNSToRedriveLambdaPermission" -> "MessageRedriveFunction";
+  "SNSToRedriveLambdaPermission" -> "DLQAlarmSNSTopic";
+}
