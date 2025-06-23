@@ -1,36 +1,34 @@
 digraph INFRA {
-  node [ color = "black", fillcolor = "#E6E6E6", height =1, style = "filled,bold,rounded", fontname = "Arial" ];
-  "MainQueue" [ label = "MainQueue
-(AWS::SQS::Queue)", shape =rectangle, fillcolor = "#CCE0AC" ];
-  "DeadLetterQueue" [ label = "DeadLetterQueue
-(AWS::SQS::Queue)", shape =rectangle, fillcolor = "#CCE0AC" ];
-  "MessageProcessorFunction" [ label = "MessageProcessorFunction
-(AWS::Lambda::Function)", shape =rectangle, fillcolor = "#B7E0FF" ];
-  "MessageRedriveFunction" [ label = "MessageRedriveFunction
-(AWS::Lambda::Function)", shape =rectangle, fillcolor = "#B7E0FF" ];
-  "LogGroupMessageProcessor" [ label = "LogGroupMessageProcessor
-(AWS::Logs::LogGroup)", shape =rectangle ];
-  "LogGroupMessageRedrive" [ label = "LogGroupMessageRedrive
-(AWS::Logs::LogGroup)", shape =rectangle ];
-  "DLQMessageAlarm" [ label = "DLQMessageAlarm
-(AWS::CloudWatch::Alarm)", shape =rectangle ];
-  "DLQAlarmSNSTopic" [ label = "DLQAlarmSNSTopic
-(AWS::SNS::Topic)", shape =rectangle, fillcolor = "#CCE0AC" ];
-  "DLQAlarmSNSTopicSubscription" [ label = "DLQAlarmSNSTopicSubscription
-(AWS::SNS::Subscription)", shape =rectangle, fillcolor = "#CCE0AC" ];
-  "SNSToRedriveLambdaPermission" [ label = "SNSToRedriveLambdaPermission
-(AWS::Lambda::Permission)", shape =rectangle ];
-  "MainQueue" -> "DeadLetterQueue";
-  "MessageProcessorFunction" -> "MainQueue";
-  "MessageProcessorFunction" -> "DeadLetterQueue";
-  "MessageRedriveFunction" -> "MainQueue";
-  "MessageRedriveFunction" -> "DeadLetterQueue";
-  "LogGroupMessageProcessor" -> "MessageProcessorFunction";
-  "LogGroupMessageRedrive" -> "MessageRedriveFunction";
-  "DLQMessageAlarm" -> "DeadLetterQueue";
-  "DLQMessageAlarm" -> "DLQAlarmSNSTopic";
-  "DLQAlarmSNSTopicSubscription" -> "DLQAlarmSNSTopic";
-  "DLQAlarmSNSTopicSubscription" -> "MessageRedriveFunction";
-  "SNSToRedriveLambdaPermission" -> "MessageRedriveFunction";
-  "SNSToRedriveLambdaPermission" -> "DLQAlarmSNSTopic";
+    rankdir=TB;
+    node [shape=rectangle, style=filled, fontname="Arial", fillcolor="#E6E6E6", color="black"];
+
+    // AWS Cloud Boundary
+    subgraph cluster_aws {
+        label = "AWS Cloud";
+        style = "dashed";
+
+        // Nodes
+        Client [label="Client", shape=rectangle, fillcolor="#FFFFFF"];
+
+        MainQueue [label="MainQueue\n(SQS Standard Queue)", fillcolor="#CCE0AC"];
+        DeadLetterQueue [label="Dead Letter Queue\n(DLQ, 3-day retention)", fillcolor="#CCE0AC"];
+
+        MessageProcessorFunction [label="Message Processor Function\n(Java 17, 512MB, 60s)", fillcolor="#B7E0FF"];
+        MessageRedriveFunction [label="Message Redrive Function\n(Java 17, 512MB, 60s)", fillcolor="#B7E0FF"];
+
+        DLQMessageAlarm [label="DLQMessageAlarm\n(CloudWatch Alarm)", fillcolor="#FFD580"];
+        DLQAlarmSNSTopic [label="DLQAlarm SNSTopic\n(SNS Topic)", fillcolor="#FFCC99"];
+    }
+
+    // Connections
+    Client -> MainQueue [label="Send Message"];
+    MainQueue -> MessageProcessorFunction [label="Poll & Process Message", color="black"];
+    MainQueue -> DeadLetterQueue [label="Move to DLQ after 3 failed attempts\n(Redrive Policy)"];
+    DeadLetterQueue -> DLQMessageAlarm [label="Monitor ApproximateAgeOfOldestMessage\n> Threshold (300 sec)"];
+    DLQMessageAlarm -> DLQAlarmSNSTopic [label="Publish Alarm Notification"];
+    DLQAlarmSNSTopic -> MessageRedriveFunction [label="Invoke Lambda"];
+    MessageProcessorFunction -> MainQueue [label="Delete Message on Success"];
+    MessageProcessorFunction -> MainQueue [label="Retry on Failure\nUp to 3 times"];
+    MessageRedriveFunction -> DeadLetterQueue [label="Poll & Read Failed Messages"];
+    MessageRedriveFunction -> MainQueue [label="Redrive Messages"];
 }
