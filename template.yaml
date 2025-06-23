@@ -6,14 +6,14 @@ Globals:
   Function:
     Timeout: 60
     Runtime: java17
-    MemorySize: 256
+    MemorySize: 512
 
 Resources:
   MainQueue:
     Type: AWS::SQS::Queue
     Properties:
       QueueName: MainQueue
-      VisibilityTimeout: 70
+      VisibilityTimeout: 180
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt DeadLetterQueue.Arn
         maxReceiveCount: 3
@@ -22,7 +22,7 @@ Resources:
     Type: AWS::SQS::Queue
     Properties:
       QueueName: DeadLetterQueue
-      MessageRetentionPeriod: 100
+      MessageRetentionPeriod: 259200 # 3 days
 
   MessageProcessorFunction:
     Type: AWS::Serverless::Function
@@ -31,6 +31,7 @@ Resources:
       Handler: com.sqsmessage.MessageProcessor::handleRequest
       CodeUri: MessageProcessor/
       Policies:
+        - AWSLambdaBasicExecutionRole
         - SQSPollerPolicy:
             QueueName: MainQueue
         - Statement:
@@ -61,6 +62,7 @@ Resources:
       Handler: com.sqsmessage.MessageRedrive::handleRequest
       CodeUri: MessageRedriver/
       Policies:
+        - AWSLambdaBasicExecutionRole
         - Statement:
             - Effect: Allow
               Action:
@@ -93,21 +95,22 @@ Resources:
   DLQMessageAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: DLQMessageAlarm
-      AlarmDescription: Alarm when there are messages in the DLQ
+      AlarmName: DLQMessageAgeAlarm
+      AlarmDescription: Alarm when the oldest message in the DLQ exceeds the age threshold
       Namespace: AWS/SQS
-      MetricName: ApproximateNumberOfMessagesVisible
+      MetricName: ApproximateAgeOfOldestMessage
       Dimensions:
         - Name: QueueName
-          Value: !GetAtt DeadLetterQueue.QueueName
-      Statistic: Sum
-      Period: 300
+          Value: DeadLetterQueue
+      Statistic: Maximum
+      Period: 60
       EvaluationPeriods: 1
-      Threshold: 3
+      Threshold: 300 # 5 min
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
       AlarmActions:
         - !Ref DLQAlarmSNSTopic
+
 
   DLQAlarmSNSTopic:
     Type: AWS::SNS::Topic
@@ -125,7 +128,7 @@ Resources:
   SNSToRedriveLambdaPermission:
     Type: AWS::Lambda::Permission
     Properties:
-      FunctionName: !GetAtt MessageRedriveFunction.Arn
+      FunctionName: !Ref MessageRedriveFunction
       Action: lambda:InvokeFunction
       Principal: sns.amazonaws.com
       SourceArn: !Ref DLQAlarmSNSTopic

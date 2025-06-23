@@ -3,7 +3,6 @@ package com.sqsmessage;
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
 import com.amazonaws.services.lambda.runtime.events.SNSEvent;
-import org.slf4j.Logger;
 import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.sqs.SqsClient;
@@ -19,7 +18,6 @@ import java.util.UUID;
  */
 public class MessageRedrive implements RequestHandler<SNSEvent, Void> {
 
-    private static final Logger logger = (Logger) java.util.logging.Logger.getLogger(String.valueOf(MessageRedrive.class));
     private static final int BATCH_SIZE = 10;
 
     private final SqsClient sqsClient;
@@ -32,15 +30,12 @@ public class MessageRedrive implements RequestHandler<SNSEvent, Void> {
         this.sourceQueueUrl = System.getenv("SOURCE_QUEUE_URL");
 
         if (region == null || region.isEmpty()) {
-            logger.error("AWS_REGION environment variable is not set.");
             throw new IllegalArgumentException("AWS_REGION environment variable is required.");
         }
         if (this.dlqUrl == null || this.dlqUrl.isEmpty()) {
-            logger.error("DLQ_URL environment variable is not set.");
             throw new IllegalArgumentException("DLQ_URL environment variable is required.");
         }
         if (this.sourceQueueUrl == null || this.sourceQueueUrl.isEmpty()) {
-            logger.error("SOURCE_QUEUE_URL environment variable is not set.");
             throw new IllegalArgumentException("SOURCE_QUEUE_URL environment variable is required.");
         }
 
@@ -51,15 +46,15 @@ public class MessageRedrive implements RequestHandler<SNSEvent, Void> {
 
     @Override
     public Void handleRequest(SNSEvent event, Context context) {
-        logger.info("Received SNS event with {} records.", event.getRecords().size());
+        context.getLogger().log("Redrive Lambda triggered by SNS event with " + event.getRecords().size() + " records.\n");
 
-        for (SNSEvent. SNSRecord SNSRecord: event.getRecords()) {
-            logger.info("SNS Message ID: {}", SNSRecord.getSNS().getMessageId());
-            logger.info("SNS Subject: {}", SNSRecord.getSNS().getSubject());
-            logger.info("SNS Message: {}", SNSRecord.getSNS().getMessageId());
+        for (SNSEvent.SNSRecord snsRecord : event.getRecords()) {
+            context.getLogger().log("SNS Message ID: " + snsRecord.getSNS().getMessageId() + "\n");
+            context.getLogger().log("SNS Subject: " + snsRecord.getSNS().getSubject() + "\n");
+            context.getLogger().log("SNS Message: " + snsRecord.getSNS().getMessage() + "\n");
         }
 
-        logger.info("Attempting to redrive messages from DLQ: {} to MainQueue: {}", dlqUrl, sourceQueueUrl);
+        context.getLogger().log("Starting redrive process from DLQ: " + dlqUrl + " to MainQueue: " + sourceQueueUrl + "\n");
 
         try {
             int totalMessagesRedriven = 0;
@@ -76,11 +71,11 @@ public class MessageRedrive implements RequestHandler<SNSEvent, Void> {
                 List<Message> dlqMessages = receiveResponse.messages();
 
                 if (dlqMessages.isEmpty()) {
-                    logger.info("No more messages found in the Dead Letter Queue.");
+                    context.getLogger().log("No more messages found in the Dead Letter Queue.\n");
                     break;
                 }
 
-                logger.info("Found {} messages in DLQ. Preparing to redrive this batch...", dlqMessages.size());
+                context.getLogger().log("Found " + dlqMessages.size() + " messages in DLQ. Redriving this batch...\n");
 
                 List<SendMessageBatchRequestEntry> sendEntries = new ArrayList<>();
                 List<DeleteMessageBatchRequestEntry> deleteEntries = new ArrayList<>();
@@ -105,9 +100,9 @@ public class MessageRedrive implements RequestHandler<SNSEvent, Void> {
                 SendMessageBatchResponse sendBatchResponse = sqsClient.sendMessageBatch(sendBatchRequest);
 
                 if (!sendBatchResponse.failed().isEmpty()) {
-                    logger.error("Some messages failed to send to the Main Queue in this batch: {}", sendBatchResponse.failed());
+                    context.getLogger().log("Some messages failed to send to Main Queue: " + sendBatchResponse.failed() + "\n");
                 } else {
-                    logger.info("Successfully sent {} messages to MainQueue in this batch.", sendEntries.size());
+                    context.getLogger().log("Successfully sent " + sendEntries.size() + " messages to MainQueue.\n");
                 }
 
                 DeleteMessageBatchRequest deleteBatchRequest = DeleteMessageBatchRequest.builder()
@@ -118,26 +113,25 @@ public class MessageRedrive implements RequestHandler<SNSEvent, Void> {
                 DeleteMessageBatchResponse deleteBatchResponse = sqsClient.deleteMessageBatch(deleteBatchRequest);
 
                 if (!deleteBatchResponse.failed().isEmpty()) {
-                    logger.error("Some messages failed to delete from Dead Letter Queue in this batch: {}", deleteBatchResponse.failed());
+                    context.getLogger().log("Some messages failed to delete from DLQ: " + deleteBatchResponse.failed() + "\n");
                 } else {
-                    logger.info("Successfully deleted {} messages from DeadLetterQueue in this batch.", deleteEntries.size());
+                    context.getLogger().log("Successfully deleted " + deleteEntries.size() + " messages from DeadLetterQueue.\n");
                 }
 
                 totalMessagesRedriven += dlqMessages.size();
             }
 
-            logger.info("Completed redriving process. Total messages redriven: {}", totalMessagesRedriven);
+            context.getLogger().log("Redrive process completed successfully. Total messages redriven: " + totalMessagesRedriven + "\n");
 
         } catch (SqsException e) {
-            logger.error("SQS Error during redrive: {}. Details: {}", e.getMessage(), e.awsErrorDetails() != null ? e.awsErrorDetails().errorMessage() : "N/A", e);
-            throw new RuntimeException("Failed to redrive messages due to SQS error.", e);
+            context.getLogger().log("SQS Error during redrive: " + e.getMessage() + "\n");
+            throw new RuntimeException("SQS Exception occurred: " + e.getMessage(), e);
         } catch (SdkClientException e) {
-            logger.warn("AWS SDK Client Error during redrive: {}. Details: ", e.getMessage(), e);
-            throw new RuntimeException("Failed to redrive messages due to AWS SDK client error.", e);
+            context.getLogger().log("AWS SDK Client Error during redrive: " + e.getMessage() + "\n");
+            throw new RuntimeException("AWS SDK Client Exception occurred: " + e.getMessage(), e);
         } catch (Exception e) {
-            //logger.("AWS SDK Client Error during redrive: {}. Details: ", e.getMessage(), e);
-            logger.warn("An unexpected error occurred during redrive: {}. Details:" ,  e.getMessage() , e);
-            throw new RuntimeException("An unexpected error occurred during message redrive.", e);
+            context.getLogger().log("Unexpected error during redrive: " + e.getMessage() + "\n");
+            throw new RuntimeException("Unexpected exception occurred: " + e.getMessage(), e);
         }
 
         return null;
