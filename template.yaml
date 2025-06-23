@@ -116,7 +116,35 @@ Resources:
     Type: AWS::SNS::Topic
     Properties:
       TopicName: DLQAlarmSNSTopic
-      KmsMasterKeyId: alias/aws/sns
+      KmsMasterKeyId: alias/dlq-sns-key
+
+  MyKMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: Key for encrypting SNS topic
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: Allow SNS and CloudWatch to use the key
+            Effect: Allow
+            Principal:
+              Service:
+                - sns.amazonaws.com
+                - cloudwatch.amazonaws.com
+            Action:
+              - kms:GenerateDataKey*
+              - kms:Decrypt
+              - kms:Encrypt
+              - kms:ReEncrypt*
+              - kms:DescribeKey
+            Resource: "*"
+
+  MyKMSKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/dlq-sns-key
+      TargetKeyId: !Ref MyKMSKey
 
   DLQAlarmSNSTopicSubscription:
     Type: AWS::SNS::Subscription
