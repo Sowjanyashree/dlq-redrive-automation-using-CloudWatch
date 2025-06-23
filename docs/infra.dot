@@ -1,34 +1,21 @@
-digraph INFRA {
-    rankdir=TB;
-    node [shape=rectangle, style=filled, fontname="Arial", fillcolor="#E6E6E6", color="black"];
+```mermaid
+graph TD
+    Client([Client])
 
-    // AWS Cloud Boundary
-    subgraph cluster_aws {
-        label = "AWS Cloud";
-        style = "dashed";
+    MainQueue[[MainQueue<br>(SQS Standard Queue)]]
+    DeadLetterQueue[[Dead Letter Queue<br>(DLQ, 3-day retention)]]
+    MessageProcessorFunction[[Message Processor Function<br>(Java 17, 512MB, 60s)]]
+    MessageRedriveFunction[[Message Redrive Function<br>(Java 17, 512MB, 60s)]]
+    DLQMessageAlarm[[DLQMessageAlarm<br>(CloudWatch Alarm)]]
+    DLQAlarmSNSTopic[[DLQAlarm SNSTopic<br>(SNS Topic)]]
 
-        // Nodes
-        Client [label="Client", shape=rectangle, fillcolor="#FFFFFF"];
-
-        MainQueue [label="MainQueue\n(SQS Standard Queue)", fillcolor="#CCE0AC"];
-        DeadLetterQueue [label="Dead Letter Queue\n(DLQ, 3-day retention)", fillcolor="#CCE0AC"];
-
-        MessageProcessorFunction [label="Message Processor Function\n(Java 17, 512MB, 60s)", fillcolor="#B7E0FF"];
-        MessageRedriveFunction [label="Message Redrive Function\n(Java 17, 512MB, 60s)", fillcolor="#B7E0FF"];
-
-        DLQMessageAlarm [label="DLQMessageAlarm\n(CloudWatch Alarm)", fillcolor="#FFD580"];
-        DLQAlarmSNSTopic [label="DLQAlarm SNSTopic\n(SNS Topic)", fillcolor="#FFCC99"];
-    }
-
-    // Connections
-    Client -> MainQueue [label="Send Message"];
-    MainQueue -> MessageProcessorFunction [label="Poll & Process Message", color="black"];
-    MainQueue -> DeadLetterQueue [label="Move to DLQ after 3 failed attempts\n(Redrive Policy)"];
-    DeadLetterQueue -> DLQMessageAlarm [label="Monitor ApproximateAgeOfOldestMessage\n> Threshold (300 sec)"];
-    DLQMessageAlarm -> DLQAlarmSNSTopic [label="Publish Alarm Notification"];
-    DLQAlarmSNSTopic -> MessageRedriveFunction [label="Invoke Lambda"];
-    MessageProcessorFunction -> MainQueue [label="Delete Message on Success"];
-    MessageProcessorFunction -> MainQueue [label="Retry on Failure\nUp to 3 times"];
-    MessageRedriveFunction -> DeadLetterQueue [label="Poll & Read Failed Messages"];
-    MessageRedriveFunction -> MainQueue [label="Redrive Messages"];
-}
+    Client -->|Send Message| MainQueue
+    MainQueue -->|Poll & Process Message| MessageProcessorFunction
+    MainQueue -->|Move to DLQ after 3 failed attempts| DeadLetterQueue
+    DeadLetterQueue -->|Monitor ApproximateAgeOfOldestMessage > Threshold (300 sec)| DLQMessageAlarm
+    DLQMessageAlarm -->|Publish Alarm Notification| DLQAlarmSNSTopic
+    DLQAlarmSNSTopic -->|Invoke Lambda| MessageRedriveFunction
+    MessageProcessorFunction -->|Delete Message on Success| MainQueue
+    MessageProcessorFunction -->|Retry on Failure (Up to 3 times)| MainQueue
+    MessageRedriveFunction -->|Poll & Read Failed Messages| DeadLetterQueue
+    MessageRedriveFunction -->|Redrive Messages| MainQueue
